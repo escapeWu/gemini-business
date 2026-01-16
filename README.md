@@ -95,29 +95,7 @@ license: mit
 
 ## 🚀 快速开始
 
-### 方法一: HuggingFace Spaces 部署（推荐）
-
-1. Fork 本项目到你的 GitHub 账户
-2. 在 [HuggingFace Spaces](https://huggingface.co/spaces) 创建新 Space
-3. 选择 Docker SDK，关联你的 GitHub 仓库
-4. 配置环境变量（Settings → Variables and secrets）：
-   ```bash
-   ACCOUNTS_CONFIG='[{"secure_c_ses":"your_cookie","csesidx":"your_idx","config_id":"your_config"}]'
-   PATH_PREFIX=path_prefix
-   ADMIN_KEY=your_admin_key
-   API_KEY=your_api_key
-   LOGO_URL=https://your-domain.com/logo.png
-   CHAT_URL=https://your-chat-app.com
-   MAIL_API=https://cloudflare_temp_email.xxx
-   MAIL_ADMIN_KEY=cloudflare-mail-admin-key
-   # 注意：EMAIL_DOMAIN 支持多个域名，用英文逗号分隔
-   EMAIL_DOMAIN=["domain1.com","domain2.org","domain3.net"]
-   
-   ```
-5. 等待构建完成（约 2-3 分钟）
-6. 访问你的 Space URL 开始使用
-
-### 方法二: Docker 部署
+### 方法一: Docker 部署
 
 ```bash
 # 1. 克隆项目
@@ -137,7 +115,7 @@ docker run -d \
   gemini-business2api
 ```
 
-### 方法三: 本地运行
+### 方法二: 本地运行
 
 ```bash
 # 1. 安装依赖

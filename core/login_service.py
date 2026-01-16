@@ -19,7 +19,7 @@ from typing import Optional, List, Dict, Any
 
 from dotenv import load_dotenv
 
-from util.gemini_auth_utils import GeminiAuthConfig, GeminiAuthHelper
+from util.gemini_auth_utils import GeminiAuthConfig, GeminiAuthHelper, GeminiAuthFlow
 
 # 加载环境变量
 load_dotenv()
@@ -132,82 +132,42 @@ class LoginService:
         """
         同步执行单次登录刷新 (在线程池中运行)
         返回: {"email": str, "success": bool, "config": dict|None, "error": str|None}
+
+        艹，现在用统一的 GeminiAuthFlow 了，代码简洁多了！
         """
         try:
-            # 延迟导入 selenium
-            import undetected_chromedriver as uc
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-        except ImportError as e:
-            return {"email": email, "success": False, "config": None, "error": f"Selenium 未安装: {e}"}
+            # 创建统一认证流程
+            auth_flow = GeminiAuthFlow(self.auth_config, self.auth_helper)
 
-        driver = None
-        try:
-            logger.info(f"🔄 开始刷新登录: {email}")
-            
-            # 配置 Chrome 选项（增加稳定性，减少崩溃）
-            options = uc.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-software-rasterizer')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--window-size=1920,1080')
-            # 增加内存限制，避免崩溃
-            options.add_argument('--js-flags=--max-old-space-size=512')
-            # 禁用一些可能导致崩溃的特性
-            options.add_argument('--disable-background-networking')
-            options.add_argument('--disable-default-apps')
-            options.add_argument('--disable-sync')
-            
-            # 指定Chrome二进制路径
-            chrome_binary = os.environ.get('CHROME_BIN', '/usr/bin/google-chrome-stable')
-            if os.path.exists(chrome_binary):
-                options.binary_location = chrome_binary
-                logger.debug(f"[CHROME] 使用Chrome路径: {chrome_binary}")
-            elif os.path.exists('/usr/bin/google-chrome'):
-                options.binary_location = '/usr/bin/google-chrome'
-                logger.debug(f"[CHROME] 使用备用Chrome路径: /usr/bin/google-chrome")
-            else:
-                logger.warning(f"[CHROME] 未找到Chrome二进制文件，使用自动检测（可能不稳定）")
-            
-            driver = uc.Chrome(options=options, use_subprocess=True)
-            wait = WebDriverWait(driver, 30)
+            # 从配置读取重试次数（艹，不能写死参数！）
+            from core.config import config
+            max_retries = config.retry.max_verification_retries if config.retry.verification_retry_enabled else 1
 
-            # 1. 访问登录页
-            driver.get(self.auth_config.login_url)
-            time.sleep(2)
+            # 执行登录流程（带智能重试）
+            result = auth_flow.execute(
+                mode="login",
+                email=email,
+                max_retries=max_retries  # 从配置读取
+            )
 
-            # 2-6. 执行邮箱验证流程（使用公共方法，与注册服务相同）
-            verify_result = self.auth_helper.perform_email_verification(driver, wait, email)
-            if not verify_result["success"]:
-                return {"email": email, "success": False, "config": None, "error": verify_result["error"]}
+            if not result["success"]:
+                return {
+                    "email": email,
+                    "success": False,
+                    "config": None,
+                    "error": result.get("error")
+                }
 
-            # 7. 等待进入工作台（使用公共方法）
-            if not self.auth_helper.wait_for_workspace(driver, timeout=30):
-                return {"email": email, "success": False, "config": None, "error": "未跳转到工作台"}
-
-            # 8. 提取配置（使用公共方法，带重试机制处理 tab crashed）
-            extract_result = self.auth_helper.extract_config_with_retry(driver, max_retries=3)
-            if not extract_result["success"]:
-                return {"email": email, "success": False, "config": None, "error": extract_result["error"]}
-
-            config_data = extract_result["config"]
-
+            # 更新配置
+            config_data = result["config"]
             config = self._update_account_config(email, config_data)
+
             logger.info(f"✅ 登录刷新成功: {email}")
             return {"email": email, "success": True, "config": config, "error": None}
 
         except Exception as e:
             logger.error(f"❌ 登录刷新异常 [{email}]: {e}")
             return {"email": email, "success": False, "config": None, "error": str(e)}
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
 
     async def start_login(self, account_ids: List[str]) -> LoginTask:
         """启动登录刷新任务"""

@@ -55,6 +55,11 @@ class RetryConfig(BaseModel):
     account_failure_threshold: int = Field(default=3, ge=1, le=10, description="账户失败阈值")
     rate_limit_cooldown_seconds: int = Field(default=600, ge=60, le=3600, description="429冷却时间（秒）")
     session_cache_ttl_seconds: int = Field(default=3600, ge=300, le=86400, description="会话缓存时间（秒）")
+    
+    # 验证码重试配置
+    verification_retry_enabled: bool = Field(default=False, description="是否启用验证码重试")
+    max_verification_retries: int = Field(default=3, ge=1, le=10, description="验证码重试次数")
+    verification_retry_interval_seconds: int = Field(default=5, ge=3, le=60, description="验证码重试时间间隔（秒）")
 
 
 class PublicDisplayConfig(BaseModel):
@@ -315,6 +320,21 @@ class ConfigManager:
     def session_cache_ttl_seconds(self) -> int:
         """会话缓存时间（秒）"""
         return self._config.retry.session_cache_ttl_seconds
+
+    @property
+    def verification_retry_enabled(self) -> bool:
+        """是否启用验证码重试"""
+        return self._config.retry.verification_retry_enabled
+
+    @property
+    def max_verification_retries(self) -> int:
+        """验证码重试次数"""
+        return self._config.retry.max_verification_retries
+
+    @property
+    def verification_retry_interval_seconds(self) -> int:
+        """验证码重试时间间隔（秒）"""
+        return self._config.retry.verification_retry_interval_seconds
 
 
 # ==================== 全局配置管理器 ====================

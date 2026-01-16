@@ -354,6 +354,11 @@ async function loadSettings() {
         document.getElementById('setting-cooldown').value = settings.retry?.rate_limit_cooldown_seconds || 600;
         document.getElementById('setting-cache-ttl').value = settings.retry?.session_cache_ttl_seconds || 3600;
 
+        // 验证码重试配置
+        document.getElementById('setting-verification-retry-enabled').checked = settings.retry?.verification_retry_enabled ?? false;
+        document.getElementById('setting-verification-retries').value = settings.retry?.max_verification_retries || 3;
+        document.getElementById('setting-verification-interval').value = settings.retry?.verification_retry_interval_seconds || 5;
+
         // 公开展示配置
         document.getElementById('setting-logo-url').value = settings.public_display?.logo_url || '';
         document.getElementById('setting-chat-url').value = settings.public_display?.chat_url || '';
@@ -397,7 +402,12 @@ async function saveSettings() {
                 max_account_switch_tries: parseInt(document.getElementById('setting-max-switch').value) || 5,
                 account_failure_threshold: parseInt(document.getElementById('setting-failure-threshold').value) || 3,
                 rate_limit_cooldown_seconds: parseInt(document.getElementById('setting-cooldown').value) || 600,
-                session_cache_ttl_seconds: parseInt(document.getElementById('setting-cache-ttl').value) || 3600
+                session_cache_ttl_seconds: parseInt(document.getElementById('setting-cache-ttl').value) || 3600,
+
+                // 验证码重试配置
+                verification_retry_enabled: document.getElementById('setting-verification-retry-enabled').checked,
+                max_verification_retries: parseInt(document.getElementById('setting-verification-retries').value) || 3,
+                verification_retry_interval_seconds: parseInt(document.getElementById('setting-verification-interval').value) || 5
             },
             public_display: {
                 logo_url: document.getElementById('setting-logo-url').value,
@@ -615,5 +625,29 @@ async function updateRegisterProgress(taskId) {
         clearInterval(registerPollingInterval);
         registerPollingInterval = null;
         lastSuccessCount = 0;
+    }
+}
+
+// 停止注册任务
+async function stopRegister() {
+    if (!confirm('确定要停止当前注册任务吗？\n已成功注册的账户会保留，正在注册的账户会被中止。')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/${window.ADMIN_PATH}/register/stop`, {
+            method: 'POST'
+        });
+
+        const result = await handleApiResponse(response);
+
+        if (result.status === 'success') {
+            alert('已发送停止信号，正在中止注册任务...');
+        } else {
+            alert(result.message || '停止失败');
+        }
+    } catch (error) {
+        console.error('停止注册失败:', error);
+        alert('停止失败: ' + error.message);
     }
 }

@@ -860,7 +860,10 @@ async def admin_get_settings(request: Request):
             "max_account_switch_tries": config.retry.max_account_switch_tries,
             "account_failure_threshold": config.retry.account_failure_threshold,
             "rate_limit_cooldown_seconds": config.retry.rate_limit_cooldown_seconds,
-            "session_cache_ttl_seconds": config.retry.session_cache_ttl_seconds
+            "session_cache_ttl_seconds": config.retry.session_cache_ttl_seconds,
+            "verification_retry_enabled": config.retry.verification_retry_enabled,
+            "max_verification_retries": config.retry.max_verification_retries,
+            "verification_retry_interval_seconds": config.retry.verification_retry_interval_seconds
         },
         "public_display": {
             "logo_url": config.public_display.logo_url,
@@ -995,6 +998,24 @@ async def admin_get_current_register_task(request: Request):
     if not task:
         return {"task": None}
     return {"task": task.to_dict()}
+
+@app.post("/admin/register/stop")
+@require_login()
+async def admin_stop_register(request: Request):
+    """停止当前注册任务"""
+    if not _register_service_available:
+        raise HTTPException(503, "注册服务不可用")
+    
+    try:
+        register_service = get_register_service()
+        stopped = register_service.stop_current_task()
+        if stopped:
+            return {"status": "success", "message": "已发送停止信号"}
+        else:
+            return {"status": "failed", "message": "没有正在运行的注册任务"}
+    except Exception as e:
+        logger.error(f"[REGISTER] 停止注册任务失败: {str(e)}")
+        raise HTTPException(500, f"停止失败: {str(e)}")
 
 # ---------- 登录刷新服务 API ----------
 @app.post("/admin/login/start")
@@ -1225,6 +1246,11 @@ if PATH_PREFIX:
     @require_login()
     async def admin_get_current_register_task_prefixed(request: Request):
         return await admin_get_current_register_task(request=request)
+    
+    @app.post(f"/{PATH_PREFIX}/register/stop")
+    @require_login()
+    async def admin_stop_register_prefixed(request: Request):
+        return await admin_stop_register(request=request)
 
     # 登录刷新服务（带前缀）
     @app.post(f"/{PATH_PREFIX}/login/start")

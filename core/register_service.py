@@ -23,7 +23,7 @@ import requests
 from dotenv import load_dotenv
 
 from core.config import config
-from util.gemini_auth_utils import GeminiAuthConfig, GeminiAuthHelper
+from util.gemini_auth_utils import GeminiAuthConfig, GeminiAuthHelper, GeminiAuthFlow
 
 # 加载环境变量
 load_dotenv()
@@ -179,13 +179,7 @@ class RegisterTask:
 
 
 class RegisterService:
-    """注册服务 - 管理注册任务"""
-
-    # 姓名池
-    NAMES = [
-        "James Smith", "John Johnson", "Robert Williams", "Michael Brown", "William Jones",
-        "David Garcia", "Mary Miller", "Patricia Davis", "Jennifer Rodriguez", "Linda Martinez"
-    ]
+    """注册服务 - 管理注册任务（艹，整合后简洁多了）"""
 
     def __init__(self):
         self._executor = ThreadPoolExecutor(max_workers=1)
@@ -197,6 +191,7 @@ class RegisterService:
         self._last_cron_run_key: Optional[str] = None
         self._cron_cache_expr: Optional[str] = None
         self._cron_cache: Optional[Dict[str, Any]] = None
+        self._stop_requested = False  # 停止标志
         # 数据目录配置（与 main.py 保持一致）
         if os.path.exists("/data"):
             self.output_dir = Path("/data")
@@ -222,7 +217,7 @@ class RegisterService:
     
     @staticmethod
     def _random_str(n: int = 10) -> str:
-        """生成随机字符串"""
+        """生成随机字符串（艹，用 sample 就行，choices 在某些环境会报错）"""
         return "".join(random.sample(ascii_letters + digits, n))
     
     def _create_email(self, domain: Optional[str] = None) -> Optional[str]:
@@ -305,123 +300,41 @@ class RegisterService:
     def _register_one_sync(self) -> Dict[str, Any]:
         """
         同步执行单次注册 (在线程池中运行)
-        返回: {"email": str, "success": bool, "config": dict|None, "error": str|None}
         """
         try:
-            # 延迟导入 selenium，因为可能没装
-            import undetected_chromedriver as uc
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-            from selenium.webdriver.common.keys import Keys
-        except ImportError as e:
-            return {"email": None, "success": False, "config": None, "error": f"Selenium 未安装: {e}"}
-        
-        email = self._get_email()
-        if not email:
-            return {"email": None, "success": False, "config": None, "error": "无法创建邮箱"}
+            # 创建统一认证流程
+            auth_flow = GeminiAuthFlow(self.auth_config, self.auth_helper)
 
-        driver = None
-        try:
-            logger.info(f"🚀 开始注册: {email}")
-            
-            # 配置 Chrome 选项（增加稳定性，减少崩溃）
-            options = uc.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-software-rasterizer')
-            options.add_argument('--disable-extensions')
-            options.add_argument('--window-size=1920,1080')
-            # 增加内存限制，避免崩溃
-            options.add_argument('--js-flags=--max-old-space-size=512')
-            # 禁用一些可能导致崩溃的特性
-            options.add_argument('--disable-background-networking')
-            options.add_argument('--disable-default-apps')
-            options.add_argument('--disable-sync')
+            # 从配置读取重试次数
+            from core.config import config
+            max_retries = config.retry.max_verification_retries if config.retry.verification_retry_enabled else 1
 
-            # 指定Chrome二进制路径
-            chrome_binary = os.environ.get('CHROME_BIN', '/usr/bin/google-chrome-stable')
-            if os.path.exists(chrome_binary):
-                options.binary_location = chrome_binary
-                logger.debug(f"[CHROME] 使用Chrome路径: {chrome_binary}")
-            elif os.path.exists('/usr/bin/google-chrome'):
-                options.binary_location = '/usr/bin/google-chrome'
-                logger.debug(f"[CHROME] 使用备用Chrome路径: /usr/bin/google-chrome")
-            else:
-                logger.warning(f"[CHROME] 未找到Chrome二进制文件，使用自动检测（可能不稳定）")
-            
-            driver = uc.Chrome(options=options, use_subprocess=True)
-            wait = WebDriverWait(driver, 30)
+            # 执行注册流程（带智能重试）
+            result = auth_flow.execute(
+                mode="register",
+                email_creator=self._get_email,  # 传入邮箱创建函数
+                max_retries=max_retries  # 从配置读取
+            )
 
-            # 1. 访问登录页
-            driver.get(self.auth_config.login_url)
-            time.sleep(2)
+            if not result["success"]:
+                return {
+                    "email": result.get("email"),
+                    "success": False,
+                    "config": None,
+                    "error": result.get("error")
+                }
 
-            # 2-6. 执行邮箱验证流程（使用公共方法）
-            verify_result = self.auth_helper.perform_email_verification(driver, wait, email)
-            if not verify_result["success"]:
-                return {"email": email, "success": False, "config": None, "error": verify_result["error"]}
-            
-            # 7. 输入姓名
-            time.sleep(2)
-            selectors = [
-                "input[formcontrolname='fullName']",
-                "input[placeholder='全名']",
-                "input[placeholder='Full name']",
-                "input#mat-input-0",
-            ]
-            name_inp = None
-            for _ in range(30):
-                for sel in selectors:
-                    try:
-                        name_inp = driver.find_element(By.CSS_SELECTOR, sel)
-                        if name_inp.is_displayed():
-                            break
-                    except:
-                        continue
-                if name_inp and name_inp.is_displayed():
-                    break
-                time.sleep(1)
-            
-            if name_inp and name_inp.is_displayed():
-                name = random.choice(self.NAMES)
-                name_inp.click()
-                time.sleep(0.2)
-                name_inp.clear()
-                for c in name:
-                    name_inp.send_keys(c)
-                    time.sleep(0.02)
-                time.sleep(0.3)
-                name_inp.send_keys(Keys.ENTER)
-                time.sleep(1)
-            else:
-                return {"email": email, "success": False, "config": None, "error": "未找到姓名输入框"}
-            
-            # 8. 等待进入工作台（使用公共方法）
-            if not self.auth_helper.wait_for_workspace(driver, timeout=30):
-                return {"email": email, "success": False, "config": None, "error": "未跳转到工作台"}
-
-            # 9. 提取配置（使用公共方法，带重试机制处理 tab crashed）
-            extract_result = self.auth_helper.extract_config_with_retry(driver, max_retries=3)
-            if not extract_result["success"]:
-                return {"email": email, "success": False, "config": None, "error": extract_result["error"]}
-
-            config_data = extract_result["config"]
-            
+            # 保存配置
+            email = result["email"]
+            config_data = result["config"]
             config = self._save_config(email, config_data)
+
             logger.info(f"✅ 注册成功: {email}")
             return {"email": email, "success": True, "config": config, "error": None}
-            
+
         except Exception as e:
-            logger.error(f"❌ 注册异常 [{email}]: {e}")
-            return {"email": email, "success": False, "config": None, "error": str(e)}
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
+            logger.error(f"❌ 注册异常: {e}")
+            return {"email": None, "success": False, "config": None, "error": str(e)}
     
     async def start_register(self, count: int, domain: Optional[str] = None) -> RegisterTask:
         """
@@ -458,6 +371,13 @@ class RegisterService:
         
         try:
             for i in range(task.count):
+                # 检查是否请求停止
+                if self._stop_requested:
+                    logger.warning(f"[REGISTER] 收到停止信号，中止注册任务")
+                    task.status = RegisterStatus.FAILED
+                    task.error = "用户中止"
+                    break
+                
                 task.progress = i + 1
                 result = await loop.run_in_executor(self._executor, self._register_one_sync)
                 task.results.append(result)
@@ -471,13 +391,16 @@ class RegisterService:
                 if i < task.count - 1:
                     await asyncio.sleep(random.randint(2, 5))
             
-            task.status = RegisterStatus.SUCCESS if task.success_count > 0 else RegisterStatus.FAILED
+            # 只有未被中止才设置为成功/失败状态
+            if task.status == RegisterStatus.RUNNING:
+                task.status = RegisterStatus.SUCCESS if task.success_count > 0 else RegisterStatus.FAILED
         except Exception as e:
             task.status = RegisterStatus.FAILED
             task.error = str(e)
         finally:
             task.finished_at = time.time()
             self._current_task_id = None
+            self._stop_requested = False  # 重置停止标志
     
     def get_task(self, task_id: str) -> Optional[RegisterTask]:
         """获取任务状态"""
@@ -551,6 +474,14 @@ class RegisterService:
         finally:
             self._is_cron_polling = False
 
+    def stop_current_task(self):
+        """停止当前注册任务"""
+        if self._current_task_id:
+            self._stop_requested = True
+            logger.info(f"[REGISTER] 请求停止当前注册任务: {self._current_task_id}")
+            return True
+        return False
+    
     def stop_cron_polling(self):
         """停止自动注册 Cron 轮询"""
         self._is_cron_polling = False
